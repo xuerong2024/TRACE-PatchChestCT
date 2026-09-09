@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+
+# Patient data and medical images
+data/
+datasets/
+nnunet_data/
+*.nii
+*.nii.gz
+*.nrrd
+*.mha
+*.mhd
+*.dcm
+*.npz
+
+# Model artifacts and experiment outputs
+outputs/
+runs/
+checkpoints/
+wandb/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.log
+*_predictions.csv
+*_localization_maps.*
+
+# Local secrets/configuration
+.env
+.env.*
+secrets.*
