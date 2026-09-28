@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run deterministic TRACE/PASE ablations for one or more CV folds."""
+"""Run deterministic TRACE/TASE ablations for one or more CV folds."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ EVALUATOR = ROOT / "classification_code" / "evaluate_patchchestct_csea_raw_logit
 
 VARIANTS = {
     "baseline": {"pooling": "mean", "fine": 0.0, "gac": 0.0, "ramp": 0},
-    "pase": {"pooling": "smooth-or", "fine": 0.0, "gac": 0.0, "ramp": 0},
-    "pase-fine": {"pooling": "smooth-or", "fine": 0.25, "gac": 0.0, "ramp": 5},
+    "tase": {"pooling": "smooth-or", "fine": 0.0, "gac": 0.0, "ramp": 0},
+    "tase-fine": {"pooling": "smooth-or", "fine": 0.25, "gac": 0.0, "ramp": 5},
     "trace": {"pooling": "smooth-or", "fine": 0.25, "gac": 0.05, "ramp": 5},
 }
 

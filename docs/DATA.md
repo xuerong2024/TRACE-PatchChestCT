@@ -17,11 +17,18 @@ annotation_dir/
 └── ...
 ```
 
-Each present file contains a binary `arr_0` of shape `24 x 12 x 12`. A missing file is treated as an all-zero patch mask. A positive case-level label must have a corresponding annotation file.
+Each present file contains a binary `arr_0` of shape `24 x 12 x 12`. A missing disease file is treated as an all-zero patch mask and therefore produces a negative crop-level case target.
 
 ## Manifests
 
-`volume_id`, `split`, `image_path`, `annotation_dir`, and the nine `<disease>_label` columns are required by the trainer. Patch-count and bookkeeping columns are retained in the example because they are useful for auditing but are not required by the loader.
+Only `volume_id`, `split`, `image_path`, and `annotation_dir` are required by
+the trainer and evaluator. Patch-count, manifest-level disease labels, and
+other bookkeeping columns are retained in the example because they are useful
+for auditing but are not used as learning targets.
+
+The `<disease>_label` values are metadata only. The effective case target is
+computed after cropping by taking the spatial OR of the corresponding
+`24 x 12 x 12` fine-grid annotation.
 
 The five CV runs use fold-specific training and validation manifests and one locked test manifest:
 
@@ -34,4 +41,4 @@ splits/fold_4/val.csv
 splits/test.csv
 ```
 
-Never construct folds by reading the test labels during training. Case thresholds and the optional deployment Patch-DSC threshold are selected on validation data only.
+Never construct folds by reading test annotations during training. Case thresholds and Patch-DSC thresholds are selected on validation data only and then frozen on test.

@@ -18,9 +18,9 @@ Localization is intentionally unaffected by CSEA:
 * Fine and Fine+GAC checkpoints use sigmoid(SmoothOR(fine logits -> 6x12x12))
   with the source training temperature.
 
-Both the historical test-oracle Patch-DSC and a leakage-free
-Patch-DSC@validation-selected-threshold are saved.  Existing run directories
-are read only, and an existing output directory is never overwritten.
+Patch-DSC@ValThr uses one threshold per class selected on validation and then
+frozen on test. Existing run directories are read only, and an existing output
+directory is never overwritten.
 """
 
 from __future__ import annotations
@@ -268,6 +268,12 @@ def validate_source_config(config: dict[str, Any]) -> None:
         raise FormalEvaluationError("CSEA formal evaluator supports V-JEPA 2.1-B only")
     if not bool(config.get("deterministic")):
         raise FormalEvaluationError("Source run was not recorded as deterministic")
+    if config.get("encoder_protocol") != (
+        "frozen V-JEPA encoder held in eval mode throughout training"
+    ):
+        raise FormalEvaluationError(
+            "Source run does not record the frozen/eval V-JEPA encoder protocol"
+        )
     grid = config.get("annotation_processing", {}).get("patch_grid_protocol")
     if grid != ANATOMICAL_GRID_V2:
         raise FormalEvaluationError(
@@ -288,7 +294,7 @@ def validate_source_config(config: dict[str, Any]) -> None:
 def audit_source_provenance(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Record source drift without confusing it with prediction drift.
 
-    Baseline/PASE predate the Fine/GAC additions to the shared trainer and
+    Baseline/TASE predate the Fine/GAC additions to the shared trainer and
     model files, so their recorded training-source hashes cannot equal the
     current evaluator dependencies.  We preserve both hashes here and rely on
     ``verify_source_max_predictions`` as the strict functional gate: the
@@ -345,7 +351,6 @@ def collect_data_fingerprint_fold_aware(
         "split",
         "image_path",
         "annotation_dir",
-        *(f"{class_name}_label" for class_name in trainmod.CLASSES),
     }
     for split_name, manifest_path in zip(split_names, manifest_paths):
         with manifest_path.open(newline="", encoding="utf-8-sig") as handle:
@@ -400,11 +405,6 @@ def collect_data_fingerprint_fold_aware(
             image_files += 1
             for class_name in trainmod.CLASSES:
                 annotation_path = annotation_dir / f"{class_name}.npz"
-                positive = float(row[f"{class_name}_label"]) > 0.0
-                if positive and not annotation_path.is_file():
-                    raise FileNotFoundError(
-                        f"Positive label lacks annotation: {annotation_path}"
-                    )
                 if not annotation_path.is_file():
                     continue
                 annotation_relative_file = (
@@ -724,20 +724,6 @@ def select_patch_thresholds(
     return thresholds, rows
 
 
-def dice_at_threshold(
-    labels: list[int],
-    scores: list[float],
-    threshold: float,
-) -> tuple[float, dict[str, float]]:
-    predictions = [int(score > threshold) for score in scores]
-    tp = sum(1 for label, pred in zip(labels, predictions) if label and pred)
-    fp = sum(1 for label, pred in zip(labels, predictions) if not label and pred)
-    fn = sum(1 for label, pred in zip(labels, predictions) if label and not pred)
-    tn = sum(1 for label, pred in zip(labels, predictions) if not label and not pred)
-    dsc = trainmod.safe_div(2.0 * tp, 2.0 * tp + fp + fn)
-    return dsc, {"tp": float(tp), "fp": float(fp), "fn": float(fn), "tn": float(tn)}
-
-
 def finite_mean_std_percent(values: list[float]) -> tuple[float, float, str]:
     finite = [float(value) * 100.0 for value in values if math.isfinite(float(value))]
     if not finite:
@@ -751,7 +737,6 @@ def build_metric_outputs(
     test_rows: list[dict[str, float | int | str]],
     patch_thresholds: dict[str, float],
     patch_threshold_rows: list[dict[str, float | int | str]],
-    test_bundle: trainmod.PredictionBundle,
     config: dict[str, Any],
 ) -> tuple[dict[str, str], list[dict[str, str]], list[dict[str, str]]]:
     patch_threshold_row_by_class = {
@@ -759,17 +744,15 @@ def build_metric_outputs(
     }
     per_class_rows: list[dict[str, str]] = []
     completed_patch_threshold_rows: list[dict[str, str]] = []
-    val_threshold_dice_values: list[float] = []
 
-    for class_index, row in enumerate(test_rows):
+    for row in test_rows:
         class_name = str(row["class"])
         threshold = patch_thresholds[class_name]
-        dsc_val_threshold, counts = dice_at_threshold(
-            test_bundle.patch_targets[class_index],
-            test_bundle.patch_scores[class_index],
-            threshold,
-        )
-        val_threshold_dice_values.append(dsc_val_threshold)
+        dsc_val_threshold = float(row["patch_dsc"])
+        counts = {
+            key: float(row[f"patch_{key}"])
+            for key in ("tp", "fp", "fn", "tn")
+        }
         per_class_rows.append(
             {
                 "Class": class_name,
@@ -782,8 +765,6 @@ def build_metric_outputs(
                 "Macro-F1 (%)": f"{float(row['macro_f1']) * 100.0:.8f}",
                 "BACC (%)": f"{float(row['bacc']) * 100.0:.8f}",
                 "Patch-AUPRC (%)": f"{float(row['patch_auprc']) * 100.0:.8f}",
-                "Patch-DSC Oracle (%)": f"{float(row['patch_dsc']) * 100.0:.8f}",
-                "Patch Oracle Threshold": f"{float(row['patch_threshold']):.8f}",
                 "Patch-DSC@ValThr (%)": f"{dsc_val_threshold * 100.0:.8f}",
                 "Patch Val Threshold": f"{threshold:.8f}",
                 "Patch Positive Cases": str(row["patch_positive_cases"]),
@@ -816,8 +797,7 @@ def build_metric_outputs(
         "Macro-F1": [float(row["macro_f1"]) for row in test_rows],
         "BACC": [float(row["bacc"]) for row in test_rows],
         "Patch-AUPRC": [float(row["patch_auprc"]) for row in test_rows],
-        "Patch-DSC Oracle": [float(row["patch_dsc"]) for row in test_rows],
-        "Patch-DSC@ValThr": val_threshold_dice_values,
+        "Patch-DSC@ValThr": [float(row["patch_dsc"]) for row in test_rows],
     }
     summary: dict[str, str] = {
         "Backbone": trainmod.BACKBONES[config["backbone"]].display_name,
@@ -977,12 +957,12 @@ def main() -> None:
         test_bundle,
         case_thresholds,
         compute_patch_dice=True,
+        patch_thresholds=patch_thresholds,
     )
     summary_row, per_class_rows, completed_patch_threshold_rows = build_metric_outputs(
         test_rows,
         patch_thresholds,
         patch_threshold_rows,
-        test_bundle,
         config,
     )
 
@@ -1067,7 +1047,6 @@ def main() -> None:
             ),
             "csea_changes_localization": False,
             "patch_subset": "positive-annotation cases per class",
-            "patch_dsc_oracle": "test thresholds 0..1 step 0.01; official-comparability only",
             "patch_dsc_val_threshold": (
                 "per-class threshold selected on validation positive-annotation cases, "
                 "then frozen on test"

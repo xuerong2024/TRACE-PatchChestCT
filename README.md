@@ -8,7 +8,7 @@ This repository contains code only. Patient data, PatchChestCT annotations, pret
 
 TRACE starts from the official V-JEPA 2.1-B pretrained encoder and adds four closely connected components:
 
-1. **PASE** uses anatomically contiguous depth grouping and SmoothOR (LogMeanExp) pooling. Strong evidence from a small lesion is retained instead of being diluted by many negative tokens.
+1. **TASE** uses anatomically contiguous depth grouping and SmoothOR (LogMeanExp) pooling. Strong evidence from a small lesion is retained instead of being diluted by many negative tokens.
 2. **Fine supervision** applies BCE + Dice directly to a `24 x 12 x 12` annotation-aligned prediction grid.
 3. **GAC** aggregates fine logits to the common `6 x 12 x 12` grid and aligns them with the coarse prediction through a fine-to-coarse consistency loss.
 4. **CSEA** replaces hard maximum case readout at inference with fixed-temperature (`tau=0.5`) raw-logit LogMeanExp. CSEA changes case classification only; localization uses the fine-to-coarse map.
@@ -21,15 +21,11 @@ L = L_coarse + lambda_fine * L_fine + lambda_gac * L_gac
 
 where `L_coarse` and `L_fine` are BCE + Dice losses, `lambda_fine=0.25`, `lambda_gac=0.05`, and both auxiliary weights are linearly warmed up for five epochs.
 
-## Main result
+## Evaluation protocol
 
-Five-fold results on the locked test set are shown below. Values are percentages and reported as mean ± population standard deviation across folds.
+All reported localization DSC values use **Patch-DSC@ValThr**: one threshold is selected per disease on the validation split and then frozen on the test split. Test-oracle DSC is not used by the trainer, evaluator, or CV summarizer.
 
-| Method | AUROC | AUPRC | Macro-F1 | BACC | Patch-AUPRC | Patch-DSC |
-|---|---:|---:|---:|---:|---:|---:|
-| TRACE | 84.12 ± 1.03 | 57.70 ± 1.85 | 53.66 ± 2.48 | 72.87 ± 1.90 | 48.69 ± 0.35 | 50.33 ± 0.38 |
-
-`Patch-DSC` above follows the historical PatchChestCT test-oracle threshold protocol for direct comparability. The CSEA evaluator additionally exports leakage-free `Patch-DSC@ValThr`, where each class threshold is selected on validation data and then frozen on test data.
+The encoder-frozen, crop-derived-label protocol changes the optimization target relative to earlier experiments. Numerical results should therefore be filled only after rerunning all folds with this release; legacy fine-tuning or test-oracle numbers are intentionally not presented as results of this code.
 
 ## Repository layout
 
@@ -41,7 +37,7 @@ TRACE-PatchChestCT/
 │   ├── train_patchchestct_official_patch_fold0.py
 │   ├── evaluate_patchchestct_csea_raw_logits.py
 │   ├── patchchestct_vjepa2_1/        # V-JEPA dense prediction model
-│   ├── patchchestct_* /              # comparison-backbone interfaces
+│   ├── patchchestct_*/               # comparison-backbone interfaces
 │   └── tests/
 ├── scripts/
 │   ├── run_cv.py                     # portable deterministic CV launcher
@@ -94,7 +90,7 @@ python scripts/run_cv.py \
   --gpu 0
 ```
 
-The launcher locks the reported protocol: seed 2026, deterministic PyTorch algorithms, V-JEPA 2.1-B official initialization, 30 epochs, batch size 2, gradient accumulation 4, AdamW at `1e-5`, anatomical `6 x 12 x 12` grid, PASE temperature 1, fine weight 0.25, GAC weight 0.05, and five-epoch warm-up. It then runs CSEA (`tau=0.5`) from the best checkpoint.
+The launcher locks the reported protocol: seed 2026, deterministic PyTorch algorithms, frozen V-JEPA 2.1-B official encoder in `eval` mode, 30 epochs, batch size 2, gradient accumulation 4, AdamW at `1e-5`, anatomical `6 x 12 x 12` grid, TASE temperature 1, fine weight 0.25, GAC weight 0.05, and five-epoch warm-up. Case labels are the spatial OR of the cropped fine-grid annotation. It then runs CSEA (`tau=0.5`) from the best checkpoint.
 
 To aggregate completed CSEA folds:
 
@@ -108,8 +104,8 @@ The same launcher exposes controlled variants while leaving all other settings u
 
 ```bash
 python scripts/run_cv.py --variant baseline  --splits-dir /path/to/splits --output-root /path/to/outputs --folds 1 --gpu 0 --no-csea
-python scripts/run_cv.py --variant pase      --splits-dir /path/to/splits --output-root /path/to/outputs --folds 1 --gpu 0 --no-csea
-python scripts/run_cv.py --variant pase-fine --splits-dir /path/to/splits --output-root /path/to/outputs --folds 1 --gpu 0 --no-csea
+python scripts/run_cv.py --variant tase      --splits-dir /path/to/splits --output-root /path/to/outputs --folds 1 --gpu 0 --no-csea
+python scripts/run_cv.py --variant tase-fine --splits-dir /path/to/splits --output-root /path/to/outputs --folds 1 --gpu 0 --no-csea
 ```
 
 Add `--csea` to evaluate any completed variant with the fixed case-level CSEA readout.
@@ -124,7 +120,9 @@ python -m unittest discover -s classification_code/tests -v
 
 ## Reproducibility notes
 
-- Every fold starts independently from the same official V-JEPA 2.1-B pretrained weights; no task-finetuned checkpoint is used for initialization.
+- Every fold starts independently from the same official V-JEPA 2.1-B pretrained weights; the encoder is frozen and permanently held in `eval` mode, and no task-finetuned checkpoint is used for initialization.
+- Case labels are recomputed after cropping as a spatial OR over each disease's `24 x 12 x 12` fine-grid target; manifest-level labels are not training/evaluation targets.
+- Patch-DSC always means Patch-DSC@ValThr. Each disease threshold is selected on validation and applied unchanged to test.
 - Train, validation, and test manifests must remain disjoint. Validation selects the best epoch and per-class case thresholds; test data are used only for final reporting.
 - `CUBLAS_WORKSPACE_CONFIG=:4096:8`, TF32 disabling, seeded workers, and deterministic PyTorch algorithms are enabled by the launcher.
 - Output directories are never overwritten.

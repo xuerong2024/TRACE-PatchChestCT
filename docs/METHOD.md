@@ -6,7 +6,7 @@ For a `96 x 192 x 192` CT crop, V-JEPA 2.1-B receives a resized `64 x 384 x 384`
 
 There are not separate classifiers for the coarse and fine branches. Both routes use the same native-token logits, so improvements cannot come from adding an independent high-capacity head.
 
-## 2. PASE
+## 2. TASE
 
 The annotation grid has 24 ordered depth planes. The legacy official reshape places planes `0,6,12,18` into one coarse depth cell, which mixes distant anatomy. The anatomical protocol instead groups consecutive planes:
 
@@ -20,7 +20,7 @@ Native V-JEPA depth tokens are partitioned into six contiguous physical-center b
 [0..4], [5..10], [11..15], [16..20], [21..26], [27..31].
 ```
 
-Within each 3-D bin, PASE uses stable LogMeanExp:
+Within each 3-D bin, TASE uses stable LogMeanExp:
 
 ```text
 m + tau * log(mean(exp((x - m) / tau))),  m = max(x), tau = 1.
@@ -59,9 +59,20 @@ L = L_coarse + 0.25 * L_fine + 0.05 * L_gac.
 
 The two auxiliary weights ramp linearly from zero over the first five epochs. `L_coarse` alone is used as the validation checkpoint-selection loss, which preserves comparability with the baseline.
 
+The official V-JEPA 2.1-B encoder is frozen. Its parameters have
+`requires_grad=False`, and overriding the model's `train()` method keeps the
+encoder in `eval` mode while the prediction heads train.
+
+For every sampled crop, the case label for each disease is recomputed as the
+spatial OR of its cropped `24 x 12 x 12` fine-grid annotation. This prevents a
+finding outside the crop from producing an inconsistent positive case target.
+
 At inference:
 
 - Case probability: `sigmoid(LogMeanExp(coarse raw logits, tau=0.5))` (CSEA).
 - Localization probability: `sigmoid(SmoothOR(fine raw logits -> 6x12x12, tau=1))`.
 
 CSEA therefore does not alter localization metrics.
+
+Patch-DSC is reported only as Patch-DSC@ValThr: validation selects the
+per-disease threshold and test evaluation reuses it unchanged.

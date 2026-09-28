@@ -32,6 +32,14 @@ from classification_code.patchchestct_pooling import (
 )
 
 
+def freeze_encoder(encoder: nn.Module) -> None:
+    """Freeze an encoder and put it in inference mode."""
+
+    for parameter in encoder.parameters():
+        parameter.requires_grad_(False)
+    encoder.eval()
+
+
 class _DeterministicAdaptiveAvgPool3dFunction(torch.autograd.Function):
     """CUDA adaptive-average forward with a deterministic CPU backward."""
 
@@ -197,6 +205,9 @@ class VJEPA21OfficialPatchClassifier(nn.Module):
             patch_supervision=False,
         )
         self.backbone = base.backbone
+        # TRACE is a linear-probing protocol: the official V-JEPA encoder is
+        # immutable and must never update running/training-time behavior.
+        freeze_encoder(self.backbone)
         hidden_size = int(getattr(self.backbone, "embed_dim", getattr(self.backbone, "num_features", 768)))
         if mil_head not in {
             "basic",
@@ -298,6 +309,7 @@ class VJEPA21OfficialPatchClassifier(nn.Module):
         self.smooth_or_temperature = float(smooth_or_temperature)
         self.fine_annotation_supervision = bool(fine_annotation_supervision)
         self.fine_annotation_shape = fine_shape
+
         if local_case_pooling not in {"max", "topk", "adaptive", "gwrp"}:
             raise ValueError(f"Unsupported local case pooling: {local_case_pooling!r}")
         if not 0.0 < gwrp_decay <= 1.0:
@@ -355,6 +367,13 @@ class VJEPA21OfficialPatchClassifier(nn.Module):
         )
         self.register_buffer("input_mean", torch.tensor(0.45, dtype=torch.float32), persistent=False)
         self.register_buffer("input_std", torch.tensor(0.225, dtype=torch.float32), persistent=False)
+
+    def train(self, mode: bool = True) -> "VJEPA21OfficialPatchClassifier":
+        """Train prediction heads while keeping the frozen encoder in eval mode."""
+
+        super().train(mode)
+        self.backbone.eval()
+        return self
 
     def _local_case_logits(self, patch_logits: torch.Tensor) -> torch.Tensor:
         flat = patch_logits.flatten(2)

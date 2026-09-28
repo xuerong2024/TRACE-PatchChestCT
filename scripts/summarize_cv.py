@@ -16,7 +16,8 @@ def parse_value(row: dict[str, str], metric: str) -> float:
     numeric = f"{metric} Mean (%)"
     if numeric in row:
         return float(row[numeric])
-    value = row[f"{metric} (%)"].split("±", 1)[0].strip()
+    display_key = f"{metric} (%)" if f"{metric} (%)" in row else metric
+    value = row[display_key].split("±", 1)[0].strip()
     return float(value)
 
 
@@ -24,17 +25,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_dir", type=Path, help="Directory containing fold_0 ... fold_4")
     args = parser.parse_args()
-    values = {metric: [] for metric in (*METRICS, "Patch-DSC")}
+    values = {metric: [] for metric in (*METRICS, "Patch-DSC@ValThr")}
     for fold in range(5):
         path = args.run_dir / f"fold_{fold}" / "summary_metrics.csv"
         with path.open(newline="", encoding="utf-8") as handle:
             row = next(csv.DictReader(handle))
         for metric in METRICS:
             values[metric].append(parse_value(row, metric))
-        dsc_name = "Patch-DSC Oracle" if "Patch-DSC Oracle Mean (%)" in row else "Patch-DSC"
-        values["Patch-DSC"].append(parse_value(row, dsc_name))
+        values["Patch-DSC@ValThr"].append(parse_value(row, "Patch-DSC@ValThr"))
 
-    print("Method\tAUROC\tAUPRC\tMacro-F1\tBACC\tPatch-AUPRC\tPatch-DSC")
+    print("Method\tAUROC\tAUPRC\tMacro-F1\tBACC\tPatch-AUPRC\tPatch-DSC@ValThr")
     formatted = [f"{mean(values[m]):.2f} ± {pstdev(values[m]):.2f}" for m in values]
     print(f"{args.run_dir.name}\t" + "\t".join(formatted))
 

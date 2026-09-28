@@ -55,14 +55,12 @@ def _resolve(path: str, base_dir: Path) -> Path:
     return cwd_path
 
 
-def load_case_labels(row: dict[str, str], classes: Sequence[str]) -> torch.Tensor:
-    labels: list[float] = []
-    for class_name in classes:
-        key = f"{class_name}_label"
-        if key not in row:
-            raise KeyError(f"Missing case-level label column {key!r} in manifest")
-        labels.append(float(row[key]))
-    return torch.tensor(labels, dtype=torch.float32)
+def case_labels_from_fine_grid(patch_target: torch.Tensor) -> torch.Tensor:
+    """Derive case targets by spatial OR over a C x D x H x W fine grid."""
+
+    if patch_target.ndim != 4:
+        raise ValueError(f"Expected CxDxHxW patch target, got {tuple(patch_target.shape)}")
+    return patch_target.flatten(1).amax(dim=1).gt(0).float()
 
 
 def load_patch_labels(
@@ -211,6 +209,7 @@ class PatchChestCTVideoDataset(Dataset):
     def __getitem__(self, index: int) -> dict[str, object]:
         row = self.rows[index]
         image_path = self.resolve_path(row["image_path"])
+        annotation_dir = self.resolve_path(row["annotation_dir"])
         video = load_video_volume(
             image_path,
             frames=self.frames,
@@ -220,9 +219,10 @@ class PatchChestCTVideoDataset(Dataset):
             input_space=self.input_space,
         )
         video = video.repeat(3, 1, 1, 1)
+        fine_target = load_patch_labels(annotation_dir, self.classes)
+        case_target = case_labels_from_fine_grid(fine_target)
         patch_target = None
         if self.load_patch_targets:
-            annotation_dir = self.resolve_path(row["annotation_dir"])
             patch_target = load_patch_labels(
                 annotation_dir,
                 self.classes,
@@ -239,7 +239,7 @@ class PatchChestCTVideoDataset(Dataset):
 
         sample: dict[str, object] = {
             "video": video.contiguous(),
-            "target": load_case_labels(row, self.classes),
+            "target": case_target,
             "volume_id": row["volume_id"],
         }
         if patch_target is not None:
@@ -253,8 +253,9 @@ def compute_case_pos_weight(
 ) -> torch.Tensor:
     positives = torch.zeros(len(dataset.classes), dtype=torch.float64)
     for row in dataset.rows:
-        for class_index, class_name in enumerate(dataset.classes):
-            positives[class_index] += float(row[f"{class_name}_label"])
+        annotation_dir = dataset.resolve_path(row["annotation_dir"])
+        fine_target = load_patch_labels(annotation_dir, dataset.classes)
+        positives += case_labels_from_fine_grid(fine_target).double()
     total_cases = len(dataset.rows)
     negatives = total_cases - positives
     pos_weight = negatives / positives.clamp_min(1.0)

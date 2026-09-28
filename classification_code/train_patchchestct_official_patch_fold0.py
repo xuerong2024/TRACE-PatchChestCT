@@ -11,10 +11,9 @@ our explicit train/val/test split:
 - val: best checkpoint selection and case-threshold selection
 - test: final reporting only
 
-Patch-DSC follows PatchChestCT's official `evaluate_model()` convention:
-for each class, evaluate only test cases with a positive manual patch
-annotation for that class, sweep thresholds in [0, 1], and report the
-class-wise best Dice/F1.
+Patch-DSC@ValThr evaluates only cases with a positive manual patch annotation
+for each class.  Its class-specific threshold is selected on validation and
+then frozen for test evaluation.
 """
 
 from __future__ import annotations
@@ -159,7 +158,8 @@ BACKBONES = {
         pretraining="V-JEPA 2.1 official ViT-B/16 384px",
         init_description=(
             "facebookresearch/vjepa2 vjepa2_1_vit_base_384; official CT crop resized to "
-            "64x384x384; dense tokens pooled to the official 6x12x12 patch grid"
+            "64x384x384; encoder frozen in eval mode; dense tokens pooled to the "
+            "official 6x12x12 patch grid"
         ),
     ),
     "voco10k_swinunetr": BackboneSpec(
@@ -329,6 +329,20 @@ def load_patch_target_24(
     return mask[:, 2::4, 8::16, 8::16].astype(np.float32, copy=False)
 
 
+def case_target_from_fine_grid(patch_target24: np.ndarray) -> np.ndarray:
+    """Derive crop-consistent case labels by spatial OR over the fine grid."""
+
+    if patch_target24.ndim != 4 or tuple(patch_target24.shape[1:]) != (24, 12, 12):
+        raise ValueError(
+            "Expected fine target shape (C,24,12,12), got "
+            f"{tuple(patch_target24.shape)}"
+        )
+    return (patch_target24.reshape(patch_target24.shape[0], -1).max(axis=1) > 0).astype(
+        np.float32,
+        copy=False,
+    )
+
+
 def official_reduce_patch_target_24_to_6(target24: torch.Tensor) -> torch.Tensor:
     """Backward-compatible entry point for the historical official grid."""
 
@@ -367,7 +381,6 @@ class PatchChestCTPatchDataset(Dataset):
         image_path = resolve_path(row["image_path"], self.base_dir)
         annotation_dir = resolve_path(row["annotation_dir"], self.base_dir)
         starts = crop_starts(self.pad_shape, self.crop_shape, self.random_crop)
-        labels = [float(row[f"{class_name}_label"]) for class_name in self.classes]
         image = load_ct_official_input(
             image_path=image_path,
             pad_shape=self.pad_shape,
@@ -383,9 +396,13 @@ class PatchChestCTPatchDataset(Dataset):
             crop_shape=self.crop_shape,
             starts=starts,
         )
+        # A case is positive iff the corresponding disease has at least one
+        # positive cell inside this exact cropped fine-grid target.  Manifest
+        # labels can describe findings outside the crop and are not used.
+        case_target = case_target_from_fine_grid(patch_target24)
         return {
             "image": torch.from_numpy(image[None] if image.ndim == 3 else image),
-            "case_target": torch.tensor(labels, dtype=torch.float32),
+            "case_target": torch.from_numpy(case_target),
             "patch_target_24": torch.from_numpy(patch_target24),
             "crop_starts": torch.tensor(starts, dtype=torch.float32),
             "volume_id": row["volume_id"],
@@ -675,6 +692,24 @@ def best_dice(labels: list[int], scores: list[float]) -> tuple[float, float, dic
             best_threshold = float(threshold)
             best_counts = {"tp": float(tp), "fp": float(fp), "fn": float(fn), "tn": float(tn)}
     return best_score, best_threshold, best_counts
+
+
+def dice_at_threshold(
+    labels: list[int],
+    scores: list[float],
+    threshold: float,
+) -> tuple[float, dict[str, float]]:
+    """Evaluate DSC at a threshold selected independently on validation."""
+
+    if not labels:
+        return math.nan, {"tp": math.nan, "fp": math.nan, "fn": math.nan, "tn": math.nan}
+    predictions = [int(score > threshold) for score in scores]
+    tp = sum(1 for label, pred in zip(labels, predictions) if label and pred)
+    fp = sum(1 for label, pred in zip(labels, predictions) if not label and pred)
+    fn = sum(1 for label, pred in zip(labels, predictions) if label and not pred)
+    tn = sum(1 for label, pred in zip(labels, predictions) if not label and not pred)
+    dsc = safe_div(2.0 * tp, 2.0 * tp + fp + fn)
+    return dsc, {"tp": float(tp), "fp": float(fp), "fn": float(fn), "tn": float(tn)}
 
 
 def finite(values: list[float]) -> list[float]:
@@ -1442,11 +1477,38 @@ def select_thresholds(
     return thresholds, rows
 
 
+def select_patch_thresholds(
+    classes: list[str],
+    val_bundle: PredictionBundle,
+) -> tuple[dict[str, float], list[dict[str, float | int | str]]]:
+    """Select one patch threshold per class on validation positive cases."""
+
+    thresholds: dict[str, float] = {}
+    rows: list[dict[str, float | int | str]] = []
+    for class_index, class_name in enumerate(classes):
+        labels = val_bundle.patch_targets[class_index]
+        scores = val_bundle.patch_scores[class_index]
+        dsc, threshold, counts = best_dice(labels, scores)
+        thresholds[class_name] = threshold
+        rows.append(
+            {
+                "class": class_name,
+                "threshold": threshold,
+                "val_dsc": dsc,
+                "val_positive_annotation_cases": val_bundle.patch_positive_cases[class_index],
+                "val_positive_cells": sum(labels),
+                **{f"val_{key}": value for key, value in counts.items()},
+            }
+        )
+    return thresholds, rows
+
+
 def per_class_metrics(
     classes: list[str],
     bundle: PredictionBundle,
     thresholds: dict[str, float],
     compute_patch_dice: bool = True,
+    patch_thresholds: dict[str, float] | None = None,
 ) -> list[dict[str, float | int | str]]:
     rows: list[dict[str, float | int | str]] = []
     for class_index, class_name in enumerate(classes):
@@ -1458,7 +1520,16 @@ def per_class_metrics(
         patch_scores = bundle.patch_scores[class_index]
         patch_ap = average_precision(patch_labels, patch_scores) if patch_labels else math.nan
         if compute_patch_dice:
-            patch_dsc, patch_threshold, patch_counts = best_dice(patch_labels, patch_scores)
+            if patch_thresholds is None:
+                raise ValueError(
+                    "Patch-DSC evaluation requires validation-selected patch thresholds"
+                )
+            patch_threshold = patch_thresholds[class_name]
+            patch_dsc, patch_counts = dice_at_threshold(
+                patch_labels,
+                patch_scores,
+                patch_threshold,
+            )
         else:
             patch_dsc = math.nan
             patch_threshold = math.nan
@@ -1495,7 +1566,7 @@ def summarize_metrics(spec: BackboneSpec, rows: list[dict[str, float | int | str
         "Macro-F1": [float(row["macro_f1"]) for row in rows],
         "BACC": [float(row["bacc"]) for row in rows],
         "Patch-AUPRC": [float(row["patch_auprc"]) for row in rows],
-        "Patch-DSC": [float(row["patch_dsc"]) for row in rows],
+        "Patch-DSC@ValThr": [float(row["patch_dsc"]) for row in rows],
     }
     return {
         "Backbone": spec.display_name,
@@ -1635,14 +1706,33 @@ def save_per_class_csv(path: Path, spec: BackboneSpec, rows: list[dict[str, floa
             "Macro-F1 (%)": fmt_float(float(row["macro_f1"]) * 100.0, 2),
             "BACC (%)": fmt_float(float(row["bacc"]) * 100.0, 2),
             "Patch-AUPRC (%)": fmt_float(float(row["patch_auprc"]) * 100.0, 2),
-            "Patch-DSC (%)": fmt_float(float(row["patch_dsc"]) * 100.0, 2),
-            "Patch Threshold": fmt_float(float(row["patch_threshold"])),
+            "Patch-DSC@ValThr (%)": fmt_float(float(row["patch_dsc"]) * 100.0, 2),
+            "Patch Threshold (Val)": fmt_float(float(row["patch_threshold"])),
             "Patch Positive Cases": str(row["patch_positive_cases"]),
             "Patch Positive Cells": str(row["patch_positive_cells"]),
             "Patch TP": fmt_float(float(row["patch_tp"]), 0),
             "Patch FP": fmt_float(float(row["patch_fp"]), 0),
             "Patch FN": fmt_float(float(row["patch_fn"]), 0),
             "Patch TN": fmt_float(float(row["patch_tn"]), 0),
+        }
+        for row in rows
+    ]
+    write_csv(path, csv_rows)
+
+
+def save_patch_threshold_csv(
+    path: Path,
+    rows: list[dict[str, float | int | str]],
+) -> None:
+    csv_rows = [
+        {
+            "Class": str(row["class"]),
+            "Patch Threshold": fmt_float(float(row["threshold"]), 8),
+            "Selection Split": "validation",
+            "Selection Objective": "maximum patch DSC on positive-annotation cases",
+            "Val Patch-DSC (%)": fmt_float(float(row["val_dsc"]) * 100.0, 2),
+            "Val Positive Annotation Cases": str(row["val_positive_annotation_cases"]),
+            "Val Positive Cells": str(row["val_positive_cells"]),
         }
         for row in rows
     ]
@@ -1657,10 +1747,18 @@ def compute_case_pos_weight(
 ) -> torch.Tensor | None:
     if mode == "none":
         return None
-    positives = torch.tensor(
-        [sum(float(row[f"{class_name}_label"]) > 0.0 for row in dataset.rows) for class_name in CLASSES],
-        dtype=torch.float32,
-    )
+    positives = torch.zeros(len(CLASSES), dtype=torch.float32)
+    center_starts = crop_starts(dataset.pad_shape, dataset.crop_shape, random_crop=False)
+    for row in dataset.rows:
+        annotation_dir = resolve_path(row["annotation_dir"], dataset.base_dir)
+        fine_target = load_patch_target_24(
+            annotation_dir=annotation_dir,
+            classes=dataset.classes,
+            pad_shape=dataset.pad_shape,
+            crop_shape=dataset.crop_shape,
+            starts=center_starts,
+        )
+        positives += torch.from_numpy(case_target_from_fine_grid(fine_target))
     negatives = float(len(dataset)) - positives
     ratio = negatives / positives.clamp_min(1.0)
     weights = ratio.sqrt() if mode == "sqrt" else ratio
@@ -1669,6 +1767,11 @@ def compute_case_pos_weight(
 
 def make_optimizer(model: nn.Module, args: argparse.Namespace, spec: BackboneSpec) -> torch.optim.Optimizer:
     optimizer_name = args.optimizer or spec.optimizer
+    trainable_parameters = [
+        parameter for parameter in model.parameters() if parameter.requires_grad
+    ]
+    if not trainable_parameters:
+        raise RuntimeError("Model has no trainable prediction-head parameters")
     if optimizer_name == "adamw":
         if spec.key == "vjepa2_1_b" and (args.head_lr_multiplier != 1.0 or args.adaptive_pool_lr is not None):
             head_prefixes = (
@@ -1708,9 +1811,14 @@ def make_optimizer(model: nn.Module, args: argparse.Namespace, spec: BackboneSpe
                 parameter_groups,
                 weight_decay=args.weight_decay,
             )
-        return torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        return torch.optim.AdamW(trainable_parameters, lr=args.lr, weight_decay=args.weight_decay)
     if optimizer_name == "sgd":
-        return torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+        return torch.optim.SGD(
+            trainable_parameters,
+            lr=args.lr,
+            momentum=args.momentum,
+            weight_decay=args.weight_decay,
+        )
     raise ValueError(f"Unsupported optimizer {optimizer_name!r}")
 
 
@@ -2142,6 +2250,14 @@ def main() -> None:
         raise RuntimeError("No training batches available")
 
     model = build_model(spec, crop_shape, args.num_output_classes, args=args).to(device)
+    if spec.key == "vjepa2_1_b":
+        encoder = getattr(model, "backbone", None)
+        if encoder is None:
+            raise RuntimeError("V-JEPA model does not expose its encoder as backbone")
+        if any(parameter.requires_grad for parameter in encoder.parameters()):
+            raise RuntimeError("TRACE requires every V-JEPA encoder parameter to be frozen")
+        if encoder.training:
+            raise RuntimeError("TRACE requires the frozen V-JEPA encoder to stay in eval mode")
     pretraining_report = getattr(model, "pretraining_report", None)
     if pretraining_report is not None:
         print(f"Pretraining initialization: {json.dumps(pretraining_report, indent=2)}", flush=True)
@@ -2437,7 +2553,7 @@ def main() -> None:
         },
         "optimizer": {
             "name": args.optimizer or spec.optimizer,
-            "backbone_lr": args.lr,
+            "backbone_lr": 0.0 if spec.key == "vjepa2_1_b" else args.lr,
             "head_lr": args.lr * args.head_lr_multiplier,
             "head_lr_multiplier": args.head_lr_multiplier,
             "adaptive_pool_lr": args.adaptive_pool_lr or args.lr * args.head_lr_multiplier,
@@ -2454,8 +2570,30 @@ def main() -> None:
             else "complete configured validation loss"
         ),
         "case_threshold_selection_rule": f"per-class threshold selected on val by maximizing {args.threshold_objective}",
-        "patch_metric_rule": "Patch-AUPRC and Patch-DSC use official positive-annotation-case patch set; Patch-DSC is per-class best threshold over 0..1 step 0.01",
-        "summary_metrics": ["AUROC", "AUPRC", "Macro-F1", "BACC", "Patch-AUPRC", "Patch-DSC"],
+        "case_label_source": "spatial OR of the cropped 24x12x12 fine-grid annotation",
+        "encoder_protocol": (
+            "frozen V-JEPA encoder held in eval mode throughout training"
+            if spec.key == "vjepa2_1_b"
+            else "trainable comparison backbone"
+        ),
+        "trainable_parameters": sum(
+            parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+        ),
+        "frozen_parameters": sum(
+            parameter.numel() for parameter in model.parameters() if not parameter.requires_grad
+        ),
+        "patch_metric_rule": (
+            "Patch-AUPRC and Patch-DSC@ValThr use the official positive-annotation-case "
+            "patch set; each class threshold is selected on validation and frozen on test"
+        ),
+        "summary_metrics": [
+            "AUROC",
+            "AUPRC",
+            "Macro-F1",
+            "BACC",
+            "Patch-AUPRC",
+            "Patch-DSC@ValThr",
+        ],
         "mean_std_scope": "over nine abnormalities, not over random seeds",
         "num_output_classes": args.num_output_classes,
         "classes": CLASSES,
@@ -2714,10 +2852,11 @@ def main() -> None:
         args.lir_temperature,
         desc="val-best",
         max_batches=args.max_val_batches,
-        collect_patch=False,
+        collect_patch=True,
         patch_localization=args.patch_localization,
     )
     thresholds, threshold_rows = select_thresholds(CLASSES, val_bundle, args.threshold_objective)
+    patch_thresholds, patch_threshold_rows = select_patch_thresholds(CLASSES, val_bundle)
     test_bundle = predict(
         model,
         test_loader,
@@ -2748,12 +2887,21 @@ def main() -> None:
         collect_patch=True,
         patch_localization=args.patch_localization,
     )
-    test_rows = per_class_metrics(CLASSES, test_bundle, thresholds)
+    test_rows = per_class_metrics(
+        CLASSES,
+        test_bundle,
+        thresholds,
+        patch_thresholds=patch_thresholds,
+    )
     summary_row = summarize_metrics(spec, test_rows)
 
     save_prediction_csv(output_dir / "val_predictions.csv", CLASSES, val_bundle, thresholds)
     save_prediction_csv(output_dir / "test_predictions.csv", CLASSES, test_bundle, thresholds)
     save_threshold_csv(output_dir / "thresholds.csv", threshold_rows)
+    save_patch_threshold_csv(
+        output_dir / "patch_thresholds.csv",
+        patch_threshold_rows,
+    )
     save_per_class_csv(output_dir / "per_class_metrics.csv", spec, test_rows)
     write_csv(output_dir / "summary_metrics.csv", [summary_row])
     adaptive_pool_path = output_dir / "adaptive_pool_weights.csv"
@@ -2773,6 +2921,7 @@ def main() -> None:
         "val_predictions": str(output_dir / "val_predictions.csv"),
         "test_predictions": str(output_dir / "test_predictions.csv"),
         "thresholds": str(output_dir / "thresholds.csv"),
+        "patch_thresholds": str(output_dir / "patch_thresholds.csv"),
         "per_class_metrics": str(output_dir / "per_class_metrics.csv"),
         "summary_metrics": str(output_dir / "summary_metrics.csv"),
     }
