@@ -25,7 +25,7 @@ where `L_coarse` and `L_fine` are BCE + Dice losses, `lambda_fine=0.25`, `lambda
 
 All reported localization DSC values use **Patch-DSC@ValThr**: one threshold is selected per disease on the validation split and then frozen on the test split. Test-oracle DSC is not used by the trainer, evaluator, or CV summarizer.
 
-The encoder-frozen, crop-derived-label protocol changes the optimization target relative to earlier experiments. Numerical results should therefore be filled only after rerunning all folds with this release; legacy fine-tuning or test-oracle numbers are intentionally not presented as results of this code.
+The V-JEPA encoder and token-wise classifier are optimized jointly end to end. Numerical results are intentionally not bundled with this code-only release; use the locked paper configurations below to reproduce them.
 
 ## Repository layout
 
@@ -35,13 +35,17 @@ TRACE-PatchChestCT/
 │   ├── patchchestct_grid.py          # legacy and anatomical grid protocols
 │   ├── patchchestct_pooling.py       # mean, SmoothOR, fixed resampling
 │   ├── train_patchchestct_official_patch_fold0.py
+│   ├── train_patchchestct_official_case_fold0.py
 │   ├── evaluate_patchchestct_csea_raw_logits.py
 │   ├── patchchestct_vjepa2_1/        # V-JEPA dense prediction model
 │   ├── patchchestct_*/               # comparison-backbone interfaces
 │   └── tests/
 ├── scripts/
 │   ├── run_cv.py                     # portable deterministic CV launcher
+│   ├── run_joint_cv.py               # paper main-table launcher
+│   ├── run_encoder_screening_cv.py   # case-level encoder screening
 │   └── summarize_cv.py               # five-fold table aggregation
+├── configs/paper/                    # versioned paper protocols
 ├── docs/
 │   ├── DATA.md
 │   └── METHOD.md
@@ -90,7 +94,7 @@ python scripts/run_cv.py \
   --gpu 0
 ```
 
-The launcher locks the reported protocol: seed 2026, deterministic PyTorch algorithms, frozen V-JEPA 2.1-B official encoder in `eval` mode, 30 epochs, batch size 2, gradient accumulation 4, AdamW at `1e-5`, anatomical `6 x 12 x 12` grid, TASE temperature 1, fine weight 0.25, GAC weight 0.05, and five-epoch warm-up. Case labels are the spatial OR of the cropped fine-grid annotation. It then runs CSEA (`tau=0.5`) from the best checkpoint.
+The launcher locks the reported protocol: seed 2026, deterministic PyTorch algorithms, end-to-end fine-tuning of the official V-JEPA 2.1-B encoder and token classifier, 30 epochs, batch size 2, gradient accumulation 4, AdamW at `1e-5` for both encoder and classifier, anatomical `6 x 12 x 12` grid, TASE temperature 1, fine weight 0.25, GAC weight 0.05, and five-epoch warm-up. Case labels are the spatial OR of the cropped fine-grid annotation. It then runs CSEA (`tau=0.5`) from the best checkpoint.
 
 To aggregate completed CSEA folds:
 
@@ -104,11 +108,54 @@ The same launcher exposes controlled variants while leaving all other settings u
 
 ```bash
 python scripts/run_cv.py --variant baseline  --splits-dir /path/to/splits --output-root /path/to/outputs --folds 1 --gpu 0 --no-csea
+python scripts/run_cv.py --variant baseline-fine --splits-dir /path/to/splits --output-root /path/to/outputs --folds 1 --gpu 0 --no-csea
 python scripts/run_cv.py --variant tase      --splits-dir /path/to/splits --output-root /path/to/outputs --folds 1 --gpu 0 --no-csea
 python scripts/run_cv.py --variant tase-fine --splits-dir /path/to/splits --output-root /path/to/outputs --folds 1 --gpu 0 --no-csea
+python scripts/run_cv.py --variant legacy-modulo --splits-dir /path/to/splits --output-root /path/to/outputs --folds 1 --gpu 0 --no-csea
 ```
 
-Add `--csea` to evaluate any completed variant with the fixed case-level CSEA readout.
+Add `--csea` to evaluate any completed anatomically aligned variant with the fixed case-level CSEA readout. Variants with fine supervision automatically report localization through the fine-to-coarse route, while their case aggregation remains Max unless `--csea` is supplied. `baseline-fine` provides fine supervision without TASE or GAC. `legacy-modulo` reproduces the interleaved modulo-six depth grouping used as the deliberately unaligned TASE design control.
+
+## Paper main-table experiments
+
+The exact joint classification/localization settings for R3D-18, Swin3D-T, MViT-v2-S, VoCo-10K, the V-JEPA baseline, and TRACE are versioned in [`configs/paper/joint_cv.json`](configs/paper/joint_cv.json). Run any subset sequentially on one GPU:
+
+```bash
+python scripts/run_joint_cv.py \
+  --methods r3d18 swin3d-t mvit-v2-s vjepa-baseline trace \
+  --splits-dir /path/to/splits \
+  --output-root /path/to/outputs \
+  --folds 0 1 2 3 4 \
+  --gpu 0
+```
+
+VoCo additionally requires its external checkpoint:
+
+```bash
+python scripts/run_joint_cv.py \
+  --methods voco10k \
+  --voco-pretrained-checkpoint /path/to/VoCo_10k.pt \
+  --splits-dir /path/to/splits \
+  --output-root /path/to/outputs \
+  --gpu 0
+```
+
+The component and TASE-design matrix is recorded in [`configs/paper/trace_ablation.json`](configs/paper/trace_ablation.json) and is executable through `scripts/run_cv.py`.
+
+## Case-level encoder screening
+
+The 12 encoders in the paper's screening table use the official case-level NoisyOR protocol. Their five-fold settings are recorded in [`configs/paper/encoder_screening.json`](configs/paper/encoder_screening.json):
+
+```bash
+python scripts/run_encoder_screening_cv.py \
+  --methods medicalnet-r18 models-genesis r3d18 vjepa2.1-b \
+  --splits-dir /path/to/splits \
+  --output-root /path/to/case_outputs \
+  --folds 0 1 2 3 4 \
+  --gpu 0
+```
+
+Pretrained weights are not redistributed. Before running the corresponding entries, place MedicalNet weights under `nnunet_data/Bronchidata/PatchChestCT/pretrained_medical_models/MedicalNet/`, VoCo at `nnunet_data/Bronchidata/PatchChestCT/pretrained_weights/voco10k/VoCo_10k.pt`, and the I3D/Slow checkpoints in the standard Torch Hub checkpoint cache. VideoMAE and TimeSformer use complete local Hugging Face snapshots; V-JEPA uses the official PyTorch Hub source and checkpoint. Models Genesis follows its public checkpoint URL when it is not already cached.
 
 ## Tests
 
@@ -120,7 +167,7 @@ python -m unittest discover -s classification_code/tests -v
 
 ## Reproducibility notes
 
-- Every fold starts independently from the same official V-JEPA 2.1-B pretrained weights; the encoder is frozen and permanently held in `eval` mode, and no task-finetuned checkpoint is used for initialization.
+- Every fold starts independently from the same official V-JEPA 2.1-B pretrained weights. The encoder and newly initialized token-wise classifier are trained jointly end to end at `1e-5`; no task-finetuned checkpoint is used for initialization.
 - Case labels are recomputed after cropping as a spatial OR over each disease's `24 x 12 x 12` fine-grid target; manifest-level labels are not training/evaluation targets.
 - Patch-DSC always means Patch-DSC@ValThr. Each disease threshold is selected on validation and applied unchanged to test.
 - Train, validation, and test manifests must remain disjoint. Validation selects the best epoch and per-class case thresholds; test data are used only for final reporting.

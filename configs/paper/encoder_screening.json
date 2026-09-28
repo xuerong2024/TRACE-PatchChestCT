@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "description": "Case-level NoisyOR encoder screening reported in the paper.",
+  "shared": {
+    "seed": 2026,
+    "num_workers": 4,
+    "weight_decay": 0.0001,
+    "noisy_or_alpha": 0.005,
+    "checkpoint_metric": "val_loss",
+    "threshold_objective": "f1"
+  },
+  "methods": {
+    "medicalnet-r18": ["medicalnet_resnet18_23", 200, 1, 2, 0.0001],
+    "medicalnet-r50": ["medicalnet_resnet50_23", 200, 1, 2, 0.0001],
+    "models-genesis": ["modelgenesis_chest_ct", 200, 1, 2, 0.0001],
+    "voco10k": ["voco10k_swinunetr", 200, 1, 2, 0.0001],
+    "r3d18": ["r3d18", 200, 10, 1, 0.0001],
+    "mvit-v2-s": ["mvit_v2_s", 200, 6, 1, 0.0001],
+    "swin3d-t": ["swin3d_t", 200, 6, 1, 0.0001],
+    "i3d-r50": ["i3d_r50", 200, 1, 2, 0.0001],
+    "slow-r50": ["slow_r50", 200, 1, 2, 0.0001],
+    "timesformer": ["timesformer", 200, 1, 2, 0.00002],
+    "videomae": ["videomae", 200, 1, 2, 0.00002],
+    "vjepa2.1-b": ["vjepa2_1_b", 30, 2, 4, 0.00001]
+  }
+}

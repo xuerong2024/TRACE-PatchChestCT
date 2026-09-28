@@ -87,6 +87,7 @@ VJEPA_MULTI_WINDOWS = (
 )
 PATCH_LOCALIZATION_MODES = (
     "linear",
+    "fine-to-coarse",
     "mct-attention",
     "mct-patchcam",
     "mct-fused",
@@ -158,7 +159,7 @@ BACKBONES = {
         pretraining="V-JEPA 2.1 official ViT-B/16 384px",
         init_description=(
             "facebookresearch/vjepa2 vjepa2_1_vit_base_384; official CT crop resized to "
-            "64x384x384; encoder frozen in eval mode; dense tokens pooled to the "
+            "64x384x384; encoder fine-tuned end to end; dense tokens pooled to the "
             "official 6x12x12 patch grid"
         ),
     ),
@@ -913,6 +914,13 @@ def mct_localization_scores(
     """
     if mode == "linear":
         return logits[:, selected_idx].sigmoid()
+    if mode == "fine-to-coarse":
+        fine_to_coarse_logits = outputs.get("fine_to_coarse_logits")
+        if fine_to_coarse_logits is None:
+            raise RuntimeError(
+                "Fine-to-coarse localization requires fine annotation supervision"
+            )
+        return fine_to_coarse_logits[:, selected_idx].float().sigmoid()
     if mode not in PATCH_LOCALIZATION_MODES:
         raise ValueError(f"Unknown patch localization mode: {mode!r}")
     attention = outputs.get("evidence_attention")
@@ -2111,11 +2119,18 @@ def main() -> None:
         raise ValueError("--lir-temperature must be positive")
     if args.class_token_decoder_depth > 1 and not uses_class_token:
         raise ValueError("--class-token-decoder-depth > 1 requires a class-token MIL head")
-    if (
-        args.patch_localization != "linear"
-        or args.checkpoint_patch_localization != "linear"
-    ) and not uses_class_token:
+    mct_localization_requested = any(
+        mode not in {"linear", "fine-to-coarse"}
+        for mode in (args.patch_localization, args.checkpoint_patch_localization)
+    )
+    if mct_localization_requested and not uses_class_token:
         raise ValueError("MCT localization modes require a class-token MIL head")
+    if (
+        "fine-to-coarse"
+        in {args.patch_localization, args.checkpoint_patch_localization}
+        and args.fine_annotation_supervision_weight <= 0.0
+    ):
+        raise ValueError("Fine-to-coarse localization requires positive fine supervision")
     if not 0.0 < args.class_token_residual_init < 1.0:
         raise ValueError("--class-token-residual-init must be strictly between 0 and 1")
     if not 0.0 < args.anatomical_evidence_gate_init < 1.0:
@@ -2254,10 +2269,8 @@ def main() -> None:
         encoder = getattr(model, "backbone", None)
         if encoder is None:
             raise RuntimeError("V-JEPA model does not expose its encoder as backbone")
-        if any(parameter.requires_grad for parameter in encoder.parameters()):
-            raise RuntimeError("TRACE requires every V-JEPA encoder parameter to be frozen")
-        if encoder.training:
-            raise RuntimeError("TRACE requires the frozen V-JEPA encoder to stay in eval mode")
+        if not all(parameter.requires_grad for parameter in encoder.parameters()):
+            raise RuntimeError("TRACE requires every V-JEPA encoder parameter to be trainable")
     pretraining_report = getattr(model, "pretraining_report", None)
     if pretraining_report is not None:
         print(f"Pretraining initialization: {json.dumps(pretraining_report, indent=2)}", flush=True)
@@ -2553,7 +2566,7 @@ def main() -> None:
         },
         "optimizer": {
             "name": args.optimizer or spec.optimizer,
-            "backbone_lr": 0.0 if spec.key == "vjepa2_1_b" else args.lr,
+            "backbone_lr": args.lr,
             "head_lr": args.lr * args.head_lr_multiplier,
             "head_lr_multiplier": args.head_lr_multiplier,
             "adaptive_pool_lr": args.adaptive_pool_lr or args.lr * args.head_lr_multiplier,
@@ -2571,11 +2584,7 @@ def main() -> None:
         ),
         "case_threshold_selection_rule": f"per-class threshold selected on val by maximizing {args.threshold_objective}",
         "case_label_source": "spatial OR of the cropped 24x12x12 fine-grid annotation",
-        "encoder_protocol": (
-            "frozen V-JEPA encoder held in eval mode throughout training"
-            if spec.key == "vjepa2_1_b"
-            else "trainable comparison backbone"
-        ),
+        "encoder_protocol": "trainable backbone optimized end to end",
         "trainable_parameters": sum(
             parameter.numel() for parameter in model.parameters() if parameter.requires_grad
         ),

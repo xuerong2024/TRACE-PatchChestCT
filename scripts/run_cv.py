@@ -15,10 +15,48 @@ TRAINER = ROOT / "classification_code" / "train_patchchestct_official_patch_fold
 EVALUATOR = ROOT / "classification_code" / "evaluate_patchchestct_csea_raw_logits.py"
 
 VARIANTS = {
-    "baseline": {"pooling": "mean", "fine": 0.0, "gac": 0.0, "ramp": 0},
-    "tase": {"pooling": "smooth-or", "fine": 0.0, "gac": 0.0, "ramp": 0},
-    "tase-fine": {"pooling": "smooth-or", "fine": 0.25, "gac": 0.0, "ramp": 5},
-    "trace": {"pooling": "smooth-or", "fine": 0.25, "gac": 0.05, "ramp": 5},
+    "legacy-modulo": {
+        "grid": "legacy_official_grid",
+        "pooling": "mean",
+        "fine": 0.0,
+        "gac": 0.0,
+        "ramp": 0,
+    },
+    "baseline": {
+        "grid": "anatomical_grid_v2_6x12x12",
+        "pooling": "mean",
+        "fine": 0.0,
+        "gac": 0.0,
+        "ramp": 0,
+    },
+    "baseline-fine": {
+        "grid": "anatomical_grid_v2_6x12x12",
+        "pooling": "mean",
+        "fine": 0.25,
+        "gac": 0.0,
+        "ramp": 5,
+    },
+    "tase": {
+        "grid": "anatomical_grid_v2_6x12x12",
+        "pooling": "smooth-or",
+        "fine": 0.0,
+        "gac": 0.0,
+        "ramp": 0,
+    },
+    "tase-fine": {
+        "grid": "anatomical_grid_v2_6x12x12",
+        "pooling": "smooth-or",
+        "fine": 0.25,
+        "gac": 0.0,
+        "ramp": 5,
+    },
+    "trace": {
+        "grid": "anatomical_grid_v2_6x12x12",
+        "pooling": "smooth-or",
+        "fine": 0.25,
+        "gac": 0.05,
+        "ramp": 5,
+    },
 }
 
 
@@ -54,6 +92,8 @@ def main() -> None:
     if any(fold not in range(5) for fold in args.folds):
         raise ValueError("--folds must contain integers from 0 to 4")
     spec = VARIANTS[args.variant]
+    if args.variant == "legacy-modulo" and args.csea:
+        raise ValueError("CSEA is defined for the anatomically aligned grid, not legacy-modulo")
     run_name = args.run_name or f"{args.variant}_seed{args.seed}_e{args.epochs}"
     use_csea = args.variant == "trace" if args.csea is None else args.csea
 
@@ -112,7 +152,7 @@ def main() -> None:
             "--num-output-classes",
             "18",
             "--patch-grid-protocol",
-            "anatomical_grid_v2_6x12x12",
+            str(spec["grid"]),
             "--patch-token-pooling",
             str(spec["pooling"]),
             "--smooth-or-temperature",
@@ -128,7 +168,7 @@ def main() -> None:
             "--threshold-objective",
             "f1",
             "--patch-localization",
-            "linear",
+            "fine-to-coarse" if float(spec["fine"]) > 0.0 else "linear",
             "--seed",
             str(args.seed),
             "--gpu",

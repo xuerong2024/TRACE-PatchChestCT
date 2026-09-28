@@ -6,13 +6,11 @@ import numpy as np
 import torch
 from torch import nn
 
-from classification_code.patchchestct_vjepa2_1.model import (
-    VJEPA21OfficialPatchClassifier,
-    freeze_encoder,
-)
+from classification_code.patchchestct_vjepa2_1.model import VJEPA21OfficialPatchClassifier
 from classification_code.train_patchchestct_official_patch_fold0 import (
     case_target_from_fine_grid,
     dice_at_threshold,
+    mct_localization_scores,
 )
 
 
@@ -29,20 +27,32 @@ class CropDerivedCaseTargetTest(unittest.TestCase):
             case_target_from_fine_grid(np.zeros((3, 6, 12, 12), dtype=np.float32))
 
 
-class FrozenEncoderProtocolTest(unittest.TestCase):
-    def test_encoder_stays_eval_when_parent_enters_train_mode(self) -> None:
+class EndToEndFineTuningProtocolTest(unittest.TestCase):
+    def test_encoder_trains_with_parent_model(self) -> None:
         model = VJEPA21OfficialPatchClassifier.__new__(VJEPA21OfficialPatchClassifier)
         nn.Module.__init__(model)
         model.backbone = nn.Sequential(nn.Linear(4, 4), nn.Dropout(0.5))
         model.classifier = nn.Linear(4, 2)
-        freeze_encoder(model.backbone)
 
         model.train(True)
 
         self.assertTrue(model.training)
         self.assertTrue(model.classifier.training)
-        self.assertFalse(model.backbone.training)
-        self.assertTrue(all(not parameter.requires_grad for parameter in model.backbone.parameters()))
+        self.assertTrue(model.backbone.training)
+        self.assertTrue(all(parameter.requires_grad for parameter in model.backbone.parameters()))
+
+
+class FineToCoarseLocalizationTest(unittest.TestCase):
+    def test_uses_fine_derived_logits_instead_of_direct_coarse_logits(self) -> None:
+        direct = torch.full((1, 3, 6, 12, 12), -10.0)
+        fine_derived = torch.full((1, 3, 6, 12, 12), 2.0)
+        actual = mct_localization_scores(
+            direct,
+            {"fine_to_coarse_logits": fine_derived},
+            selected_idx=[0, 2],
+            mode="fine-to-coarse",
+        )
+        torch.testing.assert_close(actual, fine_derived[:, [0, 2]].sigmoid())
 
 
 class ValidationThresholdDiceTest(unittest.TestCase):

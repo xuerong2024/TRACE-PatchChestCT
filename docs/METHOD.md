@@ -59,9 +59,10 @@ L = L_coarse + 0.25 * L_fine + 0.05 * L_gac.
 
 The two auxiliary weights ramp linearly from zero over the first five epochs. `L_coarse` alone is used as the validation checkpoint-selection loss, which preserves comparability with the baseline.
 
-The official V-JEPA 2.1-B encoder is frozen. Its parameters have
-`requires_grad=False`, and overriding the model's `train()` method keeps the
-encoder in `eval` mode while the prediction heads train.
+The official V-JEPA 2.1-B encoder is fine-tuned end to end with the newly
+initialized token-wise linear classifier. Both use AdamW with learning rate
+`1e-5`; each fold starts independently from the same official pretrained
+weights rather than from a task-fine-tuned checkpoint.
 
 For every sampled crop, the case label for each disease is recomputed as the
 spatial OR of its cropped `24 x 12 x 12` fine-grid annotation. This prevents a

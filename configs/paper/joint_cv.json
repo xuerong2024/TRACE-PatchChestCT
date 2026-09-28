@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "description": "Five-fold joint classification/localization protocols used for the paper main table.",
+  "shared": {
+    "seed": 2026,
+    "num_workers": 4,
+    "weight_decay": 0.0001,
+    "dice_weight": 1.0,
+    "patch_loss": "bce",
+    "patch_grid_protocol": "anatomical_grid_v2_6x12x12",
+    "checkpoint_metric": "val_loss",
+    "threshold_objective": "f1"
+  },
+  "methods": {
+    "r3d18": {
+      "run_name": "r3d18_patch_anatomical_grid_v2_from_kinetics400_seed2026_e200",
+      "backbone": "r3d18",
+      "epochs": 200,
+      "batch_size": 10,
+      "gradient_accumulation_steps": 1,
+      "learning_rate": 0.0001,
+      "optimizer": "adamw",
+      "patch_token_pooling": "mean"
+    },
+    "swin3d-t": {
+      "run_name": "swin3d_t_patch_anatomical_grid_v2_from_kinetics400_seed2026_e200",
+      "backbone": "swin3d_t",
+      "epochs": 200,
+      "batch_size": 6,
+      "gradient_accumulation_steps": 1,
+      "learning_rate": 0.0001,
+      "optimizer": "sgd",
+      "patch_token_pooling": "mean"
+    },
+    "mvit-v2-s": {
+      "run_name": "mvit_v2_s_patch_anatomical_grid_v2_scratch_seed2026_e200",
+      "backbone": "mvit_v2_s",
+      "epochs": 200,
+      "batch_size": 6,
+      "gradient_accumulation_steps": 1,
+      "learning_rate": 0.0001,
+      "optimizer": "sgd",
+      "patch_token_pooling": "mean"
+    },
+    "voco10k": {
+      "run_name": "voco10k_swinunetr_l3_patch_anatomical_grid_v2_from_voco10k_seed2026_e200",
+      "backbone": "voco10k_swinunetr",
+      "epochs": 200,
+      "batch_size": 1,
+      "gradient_accumulation_steps": 6,
+      "learning_rate": 0.0001,
+      "optimizer": "adamw",
+      "patch_token_pooling": "mean",
+      "requires_voco_checkpoint": true
+    },
+    "vjepa-baseline": {
+      "run_name": "vjepa2_1_b_patch_anatomical_grid_v2_baseline_from_vjepa_seed2026_e30",
+      "backbone": "vjepa2_1_b",
+      "epochs": 30,
+      "batch_size": 2,
+      "gradient_accumulation_steps": 4,
+      "learning_rate": 0.00001,
+      "optimizer": "adamw",
+      "patch_token_pooling": "mean"
+    },
+    "trace": {
+      "run_name": "vjepa2_1_b_patch_anatomical_grid_v2_smooth_or_f2c_w0p25_c0p05_r5_from_vjepa_seed2026_e30",
+      "backbone": "vjepa2_1_b",
+      "epochs": 30,
+      "batch_size": 2,
+      "gradient_accumulation_steps": 4,
+      "learning_rate": 0.00001,
+      "optimizer": "adamw",
+      "patch_token_pooling": "smooth-or",
+      "smooth_or_temperature": 1.0,
+      "fine_annotation_supervision_weight": 0.25,
+      "fine_coarse_consistency_weight": 0.05,
+      "fine_supervision_ramp_epochs": 5,
+      "patch_localization": "fine-to-coarse",
+      "csea": true
+    }
+  }
+}

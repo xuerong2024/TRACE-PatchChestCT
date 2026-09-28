@@ -268,11 +268,9 @@ def validate_source_config(config: dict[str, Any]) -> None:
         raise FormalEvaluationError("CSEA formal evaluator supports V-JEPA 2.1-B only")
     if not bool(config.get("deterministic")):
         raise FormalEvaluationError("Source run was not recorded as deterministic")
-    if config.get("encoder_protocol") != (
-        "frozen V-JEPA encoder held in eval mode throughout training"
-    ):
+    if config.get("encoder_protocol") != "trainable backbone optimized end to end":
         raise FormalEvaluationError(
-            "Source run does not record the frozen/eval V-JEPA encoder protocol"
+            "Source run does not record the end-to-end V-JEPA fine-tuning protocol"
         )
     grid = config.get("annotation_processing", {}).get("patch_grid_protocol")
     if grid != ANATOMICAL_GRID_V2:

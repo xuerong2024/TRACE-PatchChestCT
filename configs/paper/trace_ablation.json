@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "description": "TRACE component and TASE design ablations exposed by scripts/run_cv.py.",
+  "shared": {
+    "backbone": "vjepa2_1_b",
+    "encoder_training": "end_to_end",
+    "epochs": 30,
+    "learning_rate": 0.00001,
+    "weight_decay": 0.0001,
+    "seed": 2026,
+    "fine_weight": 0.25,
+    "gac_weight": 0.05,
+    "auxiliary_ramp_epochs": 5,
+    "tase_temperature": 1.0,
+    "csea_temperature": 0.5
+  },
+  "variants": {
+    "legacy-modulo": {
+      "grid": "legacy_official_grid",
+      "pooling": "mean",
+      "fine_weight": 0.0,
+      "gac_weight": 0.0,
+      "localization": "direct-coarse"
+    },
+    "baseline": {
+      "grid": "anatomical_grid_v2_6x12x12",
+      "pooling": "mean",
+      "fine_weight": 0.0,
+      "gac_weight": 0.0,
+      "localization": "direct-coarse"
+    },
+    "baseline-fine": {
+      "grid": "anatomical_grid_v2_6x12x12",
+      "pooling": "mean",
+      "fine_weight": 0.25,
+      "gac_weight": 0.0,
+      "localization": "fine-to-coarse"
+    },
+    "tase": {
+      "grid": "anatomical_grid_v2_6x12x12",
+      "pooling": "smooth-or",
+      "fine_weight": 0.0,
+      "gac_weight": 0.0,
+      "localization": "direct-coarse"
+    },
+    "tase-fine": {
+      "grid": "anatomical_grid_v2_6x12x12",
+      "pooling": "smooth-or",
+      "fine_weight": 0.25,
+      "gac_weight": 0.0,
+      "localization": "fine-to-coarse"
+    },
+    "trace": {
+      "grid": "anatomical_grid_v2_6x12x12",
+      "pooling": "smooth-or",
+      "fine_weight": 0.25,
+      "gac_weight": 0.05,
+      "localization": "fine-to-coarse"
+    }
+  }
+}
