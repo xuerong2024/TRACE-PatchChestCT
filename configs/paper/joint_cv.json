@@ -3,6 +3,8 @@
   "description": "Five-fold joint classification/localization protocols used for the paper main table.",
   "shared": {
     "seed": 2026,
+    "encoder_training": "end_to_end",
+    "fold_standard_deviation": "population",
     "num_workers": 4,
     "weight_decay": 0.0001,
     "dice_weight": 1.0,
@@ -35,6 +37,7 @@
     "mvit-v2-s": {
       "run_name": "mvit_v2_s_patch_anatomical_grid_v2_scratch_seed2026_e200",
       "backbone": "mvit_v2_s",
+      "initialization": "random",
       "epochs": 200,
       "batch_size": 6,
       "gradient_accumulation_steps": 1,

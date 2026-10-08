@@ -77,3 +77,8 @@ CSEA therefore does not alter localization metrics.
 
 Patch-DSC is reported only as Patch-DSC@ValThr: validation selects the
 per-disease threshold and test evaluation reuses it unchanged.
+
+Patch AUPRC and Patch-DSC are computed per disease from cells belonging to
+cases with at least one positive annotation cell for that disease, following
+the reference patch-evaluation protocol. All-negative cases are excluded from
+that disease's patch metric.

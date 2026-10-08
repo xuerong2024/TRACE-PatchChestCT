@@ -34,6 +34,12 @@ def main() -> None:
     config = json.loads(args.config.read_text())
     shared = config["shared"]
     methods = config["methods"]
+    if shared.get("encoder_training") != "end_to_end":
+        raise ValueError("Paper encoder screening requires encoder_training='end_to_end'")
+    if shared.get("case_label_source") != "manifest disease labels":
+        raise ValueError("Paper encoder screening requires manifest disease labels")
+    if shared.get("fold_standard_deviation") != "population":
+        raise ValueError("Paper encoder screening requires population fold standard deviation")
     selected = args.methods or list(methods)
     unknown = sorted(set(selected) - set(methods))
     if unknown:

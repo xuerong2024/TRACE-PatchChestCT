@@ -1393,6 +1393,15 @@ def main() -> None:
 
     model = build_model(spec, crop_shape, args.num_output_classes, args.deterministic)
     adapter_metadata = model_protocol_metadata(model)
+    frozen_parameter_names = [
+        name for name, parameter in model.named_parameters() if not parameter.requires_grad
+    ]
+    if frozen_parameter_names:
+        preview = ", ".join(frozen_parameter_names[:8])
+        raise RuntimeError(
+            "Paper encoder screening requires end-to-end optimization, but found "
+            f"{len(frozen_parameter_names)} frozen parameters: {preview}"
+        )
     model = model.to(device)
     criterion = nn.BCELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -1462,6 +1471,14 @@ def main() -> None:
         "mil_bag_size_per_patient_per_selected_class": OFFICIAL_BAG_SIZE,
         "loss": "official study-level torch.nn.BCELoss on NoisyOR probabilities",
         "optimizer": {"name": "AdamW", "lr": args.lr, "weight_decay": args.weight_decay},
+        "encoder_protocol": "trainable backbone optimized end to end",
+        "trainable_parameters": sum(
+            parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+        ),
+        "frozen_parameters": sum(
+            parameter.numel() for parameter in model.parameters() if not parameter.requires_grad
+        ),
+        "case_label_source": "manifest disease labels",
         "gradient_clipping": (
             None
             if args.max_grad_norm is None

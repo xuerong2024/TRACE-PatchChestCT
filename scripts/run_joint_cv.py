@@ -47,6 +47,10 @@ def main() -> None:
     config = json.loads(args.config.read_text())
     shared = config["shared"]
     methods = config["methods"]
+    if shared.get("encoder_training") != "end_to_end":
+        raise ValueError("Paper joint experiments require encoder_training='end_to_end'")
+    if shared.get("fold_standard_deviation") != "population":
+        raise ValueError("Paper joint experiments require population fold standard deviation")
     selected_methods = args.methods or list(methods)
     unknown_methods = sorted(set(selected_methods) - set(methods))
     if unknown_methods:

@@ -25,7 +25,7 @@ where `L_coarse` and `L_fine` are BCE + Dice losses, `lambda_fine=0.25`, `lambda
 
 All reported localization DSC values use **Patch-DSC@ValThr**: one threshold is selected per disease on the validation split and then frozen on the test split. Test-oracle DSC is not used by the trainer, evaluator, or CV summarizer.
 
-The V-JEPA encoder and token-wise classifier are optimized jointly end to end. Numerical results are intentionally not bundled with this code-only release; use the locked paper configurations below to reproduce them.
+The V-JEPA encoder and token-wise classifier are optimized jointly end to end. The paper launchers likewise optimize every comparison encoder end to end; optional freezing switches retained in generic utility modules are not used by any paper configuration. Numerical results are intentionally not bundled with this code-only release; use the locked paper configurations below to reproduce them.
 
 ## Repository layout
 
@@ -155,6 +155,8 @@ python scripts/run_encoder_screening_cv.py \
   --gpu 0
 ```
 
+The screening table contains 12 encoder--initialization configurations. MViT-v2-S is trained from random initialization as an architectural control; the remaining entries use the medical or video initialization recorded in the configuration and run metadata. Screening uses manifest-level case labels and the official case-level NoisyOR route, whereas the joint patch-supervised experiments derive crop-consistent case labels from the cropped fine-grid annotation.
+
 Pretrained weights are not redistributed. Before running the corresponding entries, place MedicalNet weights under `nnunet_data/Bronchidata/PatchChestCT/pretrained_medical_models/MedicalNet/`, VoCo at `nnunet_data/Bronchidata/PatchChestCT/pretrained_weights/voco10k/VoCo_10k.pt`, and the I3D/Slow checkpoints in the standard Torch Hub checkpoint cache. VideoMAE and TimeSformer use complete local Hugging Face snapshots; V-JEPA uses the official PyTorch Hub source and checkpoint. Models Genesis follows its public checkpoint URL when it is not already cached.
 
 ## Tests
@@ -168,20 +170,22 @@ python -m unittest discover -s classification_code/tests -v
 ## Reproducibility notes
 
 - Every fold starts independently from the same official V-JEPA 2.1-B pretrained weights. The encoder and newly initialized token-wise classifier are trained jointly end to end at `1e-5`; no task-finetuned checkpoint is used for initialization.
-- Case labels are recomputed after cropping as a spatial OR over each disease's `24 x 12 x 12` fine-grid target; manifest-level labels are not training/evaluation targets.
+- In joint patch-supervised experiments, case labels are recomputed after cropping as a spatial OR over each disease's `24 x 12 x 12` fine-grid target. The separate case-level encoder screening uses manifest-level labels.
 - Patch-DSC always means Patch-DSC@ValThr. Each disease threshold is selected on validation and applied unchanged to test.
+- Patch AUPRC and Patch-DSC use cells from positive-annotation cases for the corresponding disease, matching the reference patch-evaluation protocol; all-negative cases are excluded from that disease's patch metric.
+- Five-fold tables use the population standard deviation across runs (`statistics.pstdev`).
 - Train, validation, and test manifests must remain disjoint. Validation selects the best epoch and per-class case thresholds; test data are used only for final reporting.
 - `CUBLAS_WORKSPACE_CONFIG=:4096:8`, TF32 disabling, seeded workers, and deterministic PyTorch algorithms are enabled by the launcher.
 - Output directories are never overwritten.
 
 ## Citation
 
-The manuscript is under preparation. Please replace this placeholder with the final bibliographic entry before public release:
+If you use this code, please cite the accompanying manuscript:
 
 ```bibtex
 @article{trace_patchchestct,
-  title   = {TRACE: Joint Case Classification and Patch Localization in Chest CT},
-  author  = {Anonymous},
+  title   = {TRACE: Token-Aligned Regional Aggregation and Granularity-Consistent Evidence Learning for Multi-Abnormality Chest CT Classification and Patch Localization},
+  author  = {Wang, Xuerong and Zhang, Tong and Zhao, Yuzhang and Tian, Yao and Zhao, Tao and Yang, Le and Wang, Binglu},
   journal = {Under review},
   year    = {2026}
 }
@@ -189,4 +193,4 @@ The manuscript is under preparation. Please replace this placeholder with the fi
 
 ## License and data terms
 
-No license is asserted by this preparation folder. Add the license approved by the authors and institution before making the repository public. CT-RATE, PatchChestCT, V-JEPA 2, and comparison backbones remain subject to their respective licenses and data-use agreements.
+No open-source license is currently granted for this repository; all rights are reserved unless a `LICENSE` file is added. CT-RATE, PatchChestCT, V-JEPA 2, and comparison backbones remain subject to their respective licenses and data-use agreements.

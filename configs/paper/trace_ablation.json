@@ -4,6 +4,7 @@
   "shared": {
     "backbone": "vjepa2_1_b",
     "encoder_training": "end_to_end",
+    "fold_standard_deviation": "population",
     "epochs": 30,
     "learning_rate": 0.00001,
     "weight_decay": 0.0001,

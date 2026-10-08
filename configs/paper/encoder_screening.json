@@ -3,6 +3,9 @@
   "description": "Case-level NoisyOR encoder screening reported in the paper.",
   "shared": {
     "seed": 2026,
+    "encoder_training": "end_to_end",
+    "case_label_source": "manifest disease labels",
+    "fold_standard_deviation": "population",
     "num_workers": 4,
     "weight_decay": 0.0001,
     "noisy_or_alpha": 0.005,
