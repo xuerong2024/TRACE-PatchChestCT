@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import torch
@@ -10,6 +12,7 @@ from classification_code.patchchestct_vjepa2_1.model import VJEPA21OfficialPatch
 from classification_code.train_patchchestct_official_patch_fold0 import (
     case_target_from_fine_grid,
     dice_at_threshold,
+    load_high_res_annotation_mask,
     mct_localization_scores,
 )
 
@@ -25,6 +28,23 @@ class CropDerivedCaseTargetTest(unittest.TestCase):
     def test_invalid_fine_grid_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "fine target shape"):
             case_target_from_fine_grid(np.zeros((3, 6, 12, 12), dtype=np.float32))
+
+
+class AnnotationDirectoryValidationTest(unittest.TestCase):
+    def test_missing_annotation_directory_is_not_silently_all_negative(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            missing = Path(temporary_directory) / "missing-volume"
+            with self.assertRaisesRegex(FileNotFoundError, "zenodo.org/records/19707049"):
+                load_high_res_annotation_mask(missing, ["atelectasis"])
+
+    def test_missing_disease_file_inside_valid_directory_remains_negative(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            mask = load_high_res_annotation_mask(
+                Path(temporary_directory),
+                ["atelectasis"],
+            )
+            self.assertEqual(mask.shape, (1, 96, 192, 192))
+            self.assertEqual(float(mask.sum()), 0.0)
 
 
 class EndToEndFineTuningProtocolTest(unittest.TestCase):

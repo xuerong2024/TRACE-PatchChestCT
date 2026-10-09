@@ -66,7 +66,11 @@ The first V-JEPA run uses `torch.hub` to obtain the official [facebookresearch/v
 
 ## Data preparation
 
-Obtain CT-RATE/PatchChestCT through their official access procedure and prepare the official preprocessed CT volumes as `.npz` files. Each CT file must contain `arr_0`; patch annotations are per-disease `.npz` files with shape `24 x 12 x 12`.
+Obtain the source CT volumes separately from the official [CT-RATE dataset](https://huggingface.co/datasets/ibrahimhamamci/CT-RATE) under its Data Usage Agreement, and prepare the official preprocessed volumes as `.npz` files. Each CT file must contain `arr_0`.
+
+The patch annotations used by this project are **not created or redistributed by this repository**. Download the official dataset [PatchChestCT: A patch-level spatial annotation dataset for nine abnormalities in chest CT](https://zenodo.org/records/19707049) from Zenodo (version DOI: [`10.5281/zenodo.19707049`](https://doi.org/10.5281/zenodo.19707049), CC BY 4.0). The deposit provides `annotations-train.zip` and `annotations-valid.zip`; it contains patch annotations and CT-RATE volume identifiers, but no CT images. The companion official implementation is available at [SadVoxel/PatchChestCT](https://github.com/SadVoxel/PatchChestCT).
+
+After extraction, each manifest `annotation_dir` must point to an existing per-volume annotation directory. Individual disease files are binary `.npz` arrays with shape `24 x 12 x 12`. A missing disease file inside a valid volume directory means that disease is negative, but a missing `annotation_dir` indicates an invalid dataset path and causes the loader to stop with an error rather than silently treating all nine diseases as negative.
 
 Create five-fold manifests in the following layout:
 

@@ -297,6 +297,12 @@ def load_ct_official_input(
 
 
 def load_high_res_annotation_mask(annotation_dir: Path, classes: list[str]) -> np.ndarray:
+    if not annotation_dir.is_dir():
+        raise FileNotFoundError(
+            "PatchChestCT annotation_dir does not exist or is not a directory: "
+            f"{annotation_dir}. Download the official annotations from "
+            "https://zenodo.org/records/19707049 and check the manifest path."
+        )
     masks: list[np.ndarray] = []
     for class_name in classes:
         path = annotation_dir / f"{class_name}.npz"
