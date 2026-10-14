@@ -189,7 +189,7 @@ If you use this code, please cite the accompanying manuscript:
 ```bibtex
 @article{trace_patchchestct,
   title   = {TRACE: Token-Aligned Regional Aggregation and Granularity-Consistent Evidence Learning for Multi-Abnormality Chest CT Classification and Patch Localization},
-  author  = {Wang, Xuerong and Zhang, Tong and Zhao, Yuzhang and Tian, Yao and Zhao, Tao and Yang, Le and Wang, Binglu},
+  author  = {Wang, Xuerong and Zhao, Tao and Zhang, Tong and Li, Yiyang and Zhao, Yuzhang and Tian, Yao and Yang, Le and Wang, Binglu},
   journal = {Under review},
   year    = {2026}
 }
